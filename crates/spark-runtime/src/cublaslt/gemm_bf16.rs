@@ -4,6 +4,10 @@
 
 use super::*;
 
+const DESC_EPILOGUE: u32 = 7;
+const DESC_BIAS_POINTER: u32 = 8;
+const EPILOGUE_BIAS: i32 = 4;
+
 /// Shared body. `op_a` selects the weight's stored layout: `CUBLAS_OP_T` for a
 /// row-major `[N,K]` weight, `CUBLAS_OP_N` for a row-major `[K,N]` one. The A
 /// LAYOUT MUST MATCH: `(k, n, ld=k)` under opT, `(n, k, ld=n)` under opN.
@@ -37,6 +41,22 @@ pub(super) fn gemm_bf16_pick(
     pick: kchain_pin::Pick,
     stream: u64,
 ) -> Result<bool> {
+    gemm_bf16_pick_bias(act, weight, out, [m, n, k], op_a, pick, None, stream)
+}
+
+/// Optional BF16 bias is fused before the sole output rounding. The original
+/// entry points pass `None`, preserving their descriptors and algorithm picks.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn gemm_bf16_pick_bias(
+    act: u64,
+    weight: u64,
+    out: u64,
+    [m, n, k]: [u32; 3],
+    op_a: i32,
+    pick: kchain_pin::Pick,
+    bias: Option<u64>,
+    stream: u64,
+) -> Result<bool> {
     let ctx = ctx()?;
     unsafe {
         let mut desc: cublasLtMatmulDesc_t = std::ptr::null_mut();
@@ -64,6 +84,31 @@ pub(super) fn gemm_bf16_pick(
             ),
             "TRANSB",
         )?;
+        if let Some(bias) = bias {
+            // CUDA cublasLt.h: EPILOGUE=7, BIAS_POINTER=8, EPILOGUE_BIAS=4.
+            // The default bias dtype matches D, which is BF16 here. D is
+            // column-major [N,M], so its row bias broadcasts over tokens.
+            let epilogue = EPILOGUE_BIAS;
+            chk(
+                cublasLtMatmulDescSetAttribute(
+                    desc,
+                    DESC_EPILOGUE,
+                    &epilogue as *const i32 as *const c_void,
+                    4,
+                ),
+                "EpilogueBias",
+            )?;
+            let bias_ptr = bias as *const c_void;
+            chk(
+                cublasLtMatmulDescSetAttribute(
+                    desc,
+                    DESC_BIAS_POINTER,
+                    &bias_ptr as *const _ as *const c_void,
+                    std::mem::size_of_val(&bias_ptr),
+                ),
+                "BiasPointer",
+            )?;
+        }
         // A = weight stored row-major [N,K] == col-major [K,N], ld=K, opT → [N,K]
         // B = act    stored row-major [M,K] == col-major [K,M], ld=K, opN → [K,M]
         // D = out    row-major [M,N]        == col-major [N,M], ld=N

@@ -10,6 +10,7 @@ members = [
     "crates/spark-comm",
     "crates/spark-model",
     "crates/spark-nllb",
+    "crates/spark-pi05",
     "crates/spark-server",
     "crates/atlas-spark-bench",
     "crates/cufile-sys",

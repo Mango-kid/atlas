@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Unit-scale E4M3 x E4M3 -> BF16 with FP32 accumulation, eager callers only.
+//! E4M3 x E4M3 -> BF16 with FP32 accumulation and optional scaled bias epilogue.
 use super::*;
 use anyhow::ensure;
 
@@ -74,6 +74,29 @@ pub fn fp8_gemm_act_weight_t_tensorwise(
     no_split_k: bool,
     stream: u64,
 ) -> Result<()> {
+    fp8_gemm_act_weight_t_scaled(act, weight, None, out, m, n, k, 1.0, no_split_k, stream)
+}
+
+/// Row-major FP8 operands with FP32 `alpha = activation_scale * weight_scale`.
+/// Optional BF16 bias `[N]` is added before the final BF16 output conversion.
+/// Uses the same heuristic and FP32 accumulation as the unit-scale entrypoint.
+#[allow(clippy::too_many_arguments)]
+pub fn fp8_gemm_act_weight_t_scaled(
+    act: u64,
+    weight: u64,
+    bias: Option<u64>,
+    out: u64,
+    m: u32,
+    n: u32,
+    k: u32,
+    alpha: f32,
+    no_split_k: bool,
+    stream: u64,
+) -> Result<()> {
+    ensure!(
+        alpha.is_finite() && alpha > 0.0,
+        "FP8 tensorwise scale product"
+    );
     ensure!(
         m > 0 && n > 0 && k > 0 && k.is_multiple_of(16),
         "FP8 tensorwise geometry"
@@ -88,7 +111,9 @@ pub fn fp8_gemm_act_weight_t_tensorwise(
                 .and_then(|v| v.checked_mul(2))
                 .ok_or_else(|| anyhow::anyhow!("FP8 tensorwise output overflow"))?,
         ),
+        (bias.unwrap_or(0), u64::from(n) * 2),
     ];
+    let spans = &spans[..if bias.is_some() { 4 } else { 3 }];
     for (i, &(ptr, bytes)) in spans.iter().enumerate() {
         ensure!(
             ptr > 0 && ptr % 16 == 0 && ptr.checked_add(bytes).is_some(),
@@ -117,6 +142,30 @@ pub fn fp8_gemm_act_weight_t_tensorwise(
                     size_of::<i32>(),
                 ),
                 "FP8 tensorwise transpose",
+            )?;
+        }
+        if let Some(bias) = bias {
+            // CUDA 13 cublasLt.h: BIAS epilogue4, DESC_EPILOGUE7,
+            // BIAS_POINTER8; default bias dtype follows the BF16 output.
+            let epilogue = 4i32;
+            let ptr = bias as *const c_void;
+            chk(
+                cublasLtMatmulDescSetAttribute(
+                    h.desc,
+                    7,
+                    (&epilogue as *const i32).cast(),
+                    size_of::<i32>(),
+                ),
+                "FP8 bias epilogue",
+            )?;
+            chk(
+                cublasLtMatmulDescSetAttribute(
+                    h.desc,
+                    8,
+                    (&ptr as *const *const c_void).cast(),
+                    size_of::<*const c_void>(),
+                ),
+                "FP8 bias pointer",
             )?;
         }
         // Header ABI: FAST_ACCUM25 has int8_t payload. Zero preserves FP32
@@ -230,7 +279,6 @@ pub fn fp8_gemm_act_weight_t_tensorwise(
             );
             Ok(result)
         })?;
-        let alpha = 1f32;
         let beta = 0f32;
         chk(
             cublasLtMatmul(

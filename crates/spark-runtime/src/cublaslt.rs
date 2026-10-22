@@ -4,8 +4,8 @@
 //! The hand-written mma.sync projection/MoE GEMMs reach only ~30% of the cuBLAS
 //! ceiling on GB10 (measured: 32 vs 85 TFLOPS bf16, 152 fp8, on the SSM-qkvz
 //! shape 3537×12288×2048). This routes those GEMMs through cuBLASLt instead.
-//! BF16 only for now — correctness-clean (no scale-format issues); native fp8
-//! block-scaled is the follow-up once the end-to-end win is proven.
+//! BF16 and native FP8/NVFP4 entrypoints share a process workspace; callers
+//! serialize launches on their model forward stream.
 
 use anyhow::{Result, bail};
 use std::ffi::c_void;
@@ -15,7 +15,9 @@ use std::sync::OnceLock;
 // re-exported so `spark_runtime::cublaslt::fp8_gemm_*` paths are unchanged.
 mod fp8;
 mod fp8_tensorwise;
-pub use fp8_tensorwise::fp8_gemm_act_weight_t_tensorwise;
+mod nvfp4;
+pub use fp8_tensorwise::{fp8_gemm_act_weight_t_scaled, fp8_gemm_act_weight_t_tensorwise};
+pub use nvfp4::nvfp4_gemm_act_weight_t;
 mod grouped;
 pub use fp8::{fp8_gemm_act_weight_t_blkscaled, fp8_gemm_act_weight_t_rowwise};
 pub use grouped::bf16_grouped_gemm_act_weight_t;
@@ -328,6 +330,33 @@ pub fn bf16_gemm_act_weight_t(
             Err(e)
         }
     }
+}
+
+/// BF16 row-major affine projection with a bias vector of length N.
+/// cuBLASLt adds the bias in the FP32 accumulator before the
+/// single BF16 output rounding. Uses the first supported fused algorithm.
+#[allow(clippy::too_many_arguments)]
+pub fn bf16_gemm_act_weight_t_bias(
+    act: u64,
+    weight: u64,
+    bias: u64,
+    out: u64,
+    m: u32,
+    n: u32,
+    k: u32,
+    stream: u64,
+) -> Result<()> {
+    gemm_bf16::gemm_bf16_pick_bias(
+        act,
+        weight,
+        out,
+        [m, n, k],
+        CUBLAS_OP_T,
+        kchain_pin::Pick::First,
+        Some(bias),
+        stream,
+    )
+    .map(|_| ())
 }
 
 #[cfg(test)]

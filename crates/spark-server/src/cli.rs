@@ -42,6 +42,8 @@ pub enum Command {
     Serve(ServeArgs),
     /// Run and inspect the benchmark suite, without the dashboard.
     Benchmark(BenchmarkArgs),
+    /// Run native vision-language-action policy inference and serving.
+    Policy(crate::policy::args::PolicyArgs),
     /// Run a command (`spark serve ...`) with the GB10 display carveout as
     /// extra KV memory.
     DisplayCarveout(crate::display_carveout::DisplayCarveoutArgs),
@@ -50,6 +52,14 @@ pub enum Command {
 #[cfg(test)]
 mod version_tests {
     use super::*;
+
+    #[test]
+    fn policy_subcommand_is_registered() {
+        let err = Cli::try_parse_from(["spark", "policy", "serve", "--help"])
+            .expect_err("help exits early");
+        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
+        assert!(err.to_string().contains("--queue-capacity"));
+    }
 
     #[test]
     fn version_flag_reports_the_packaged_version() {

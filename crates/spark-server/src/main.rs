@@ -51,6 +51,7 @@ mod model_resolver;
 mod moe_quality;
 mod ngram;
 mod openai;
+mod policy;
 mod rate_limiter;
 pub mod reasoning_parser;
 pub mod recipe;
@@ -86,6 +87,20 @@ fn main() -> Result<()> {
         tracing_subscriber::fmt().with_env_filter("info").init();
         return display_carveout::run(args);
     }
+    if let Command::Policy(args) = cli.command {
+        // Policy infer writes a single machine-readable JSON response to stdout.
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "info".into()),
+            )
+            .with_writer(std::io::stderr)
+            .init();
+        return tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?
+            .block_on(policy::dispatch(args));
+    }
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
@@ -102,7 +117,7 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Serve(args) => args.no_tui || args.rank > 0 || args.check_kernels,
         // The benchmark subcommand is a script's entry point: always plain, so
         // nothing here reaches `tui::start` or takes the terminal.
-        Command::Benchmark(_) => true,
+        Command::Benchmark(_) | Command::Policy(_) => true,
         // A launcher that execs its command at once.
         Command::DisplayCarveout(_) => true,
     };
@@ -143,6 +158,7 @@ async fn run(cli: Cli) -> Result<()> {
         Command::DisplayCarveout(_) => {
             anyhow::bail!("display-carveout must run before the async runtime starts")
         }
+        Command::Policy(_) => anyhow::bail!("policy must run through its plain JSON entry point"),
         Command::Serve(args) => {
             let serving = serve(args, tui_channels);
             tokio::pin!(serving);

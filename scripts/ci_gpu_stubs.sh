@@ -31,6 +31,9 @@ int cuCtxGetCurrent(void **a) { (void)a; return 100; }
 int cuCtxSetCurrent(void *a) { (void)a; return 100; }
 int cuCtxGetDevice(int *a) { (void)a; return 100; }
 int cuCtxSynchronize(void) { return 100; }
+/* Diagnostic CUDA profiler ranges; unavailable on CPU-only CI hosts. */
+int cuProfilerStart(void) { return 100; }
+int cuProfilerStop(void) { return 100; }
 int cuDeviceGetAttribute(int *a, unsigned int b, int c) { (void)a; (void)b; (void)c; return 100; }
 /* Errors */
 int cuGetErrorName(int code, const char **out) { (void)code; (void)out; return 100; }

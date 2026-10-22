@@ -16,6 +16,8 @@ cuda = [
     "spark-model/cuda",
     "spark-storage/cuda",
     "spark-comm/cuda",
+    "dep:spark-pi05",
+    "spark-pi05/cuda",
 ]
 # `nccl` adds the NCCL multi-GPU collective backend (EP/TP) on top of
 # `cuda`. NVIDIA builds get it via `default`; SCALE/AMD (gfx1151)
@@ -43,6 +45,7 @@ spark-runtime = { path = "../spark-runtime", default-features = false }
 spark-model = { path = "../spark-model", default-features = false }
 spark-comm = { path = "../spark-comm", default-features = false }
 spark-storage = { path = "../spark-storage", default-features = false }
+spark-pi05 = { path = "../spark-pi05", optional = true, default-features = false }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

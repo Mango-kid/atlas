@@ -53,6 +53,20 @@ pub fn bf16_gemm_act_weight_t(
     unreachable!("cublaslt::bf16_gemm_act_weight_t is cuda-only (not built for metal)")
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn bf16_gemm_act_weight_t_bias(
+    _act: u64,
+    _weight: u64,
+    _bias: u64,
+    _out: u64,
+    _m: u32,
+    _n: u32,
+    _k: u32,
+    _stream: u64,
+) -> Result<()> {
+    unreachable!("cublaslt::bf16_gemm_act_weight_t_bias is cuda-only (not built for metal)")
+}
+
 pub fn tf32_gemm_act_weight_t(
     _act: u64,
     _weight: u64,
@@ -122,4 +136,39 @@ pub fn fp8_gemm_act_weight_t_tensorwise(
     _stream: u64,
 ) -> anyhow::Result<()> {
     anyhow::bail!("cuBLASLt tensorwise FP8 requires CUDA")
+}
+
+/// Native NVFP4 is only available on the CUDA backend.
+#[allow(clippy::too_many_arguments)]
+pub fn nvfp4_gemm_act_weight_t(
+    _act: u64,
+    _act_scales: u64,
+    _weight: u64,
+    _weight_scales: u64,
+    _alpha: f32,
+    _bias: Option<u64>,
+    _out: u64,
+    _m: u32,
+    _n: u32,
+    _k: u32,
+    _stream: u64,
+) -> anyhow::Result<()> {
+    anyhow::bail!("NVFP4 cuBLASLt GEMM requires CUDA")
+}
+
+/// Scaled native FP8 is CUDA-only.
+#[allow(clippy::too_many_arguments)]
+pub fn fp8_gemm_act_weight_t_scaled(
+    _act: u64,
+    _weight: u64,
+    _bias: Option<u64>,
+    _out: u64,
+    _m: u32,
+    _n: u32,
+    _k: u32,
+    _alpha: f32,
+    _no_split_k: bool,
+    _stream: u64,
+) -> anyhow::Result<()> {
+    anyhow::bail!("Scaled cuBLASLt FP8 requires CUDA")
 }

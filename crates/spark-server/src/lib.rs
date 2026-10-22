@@ -11,6 +11,7 @@
 
 //! Atlas Spark — shared modules for integration tests.
 
+pub mod policy;
 pub mod tokenizer;
 
 // Reasoning-parser format registry (DeepSeek-R1 `<think>`/`</think>` contract

@@ -13,7 +13,9 @@ fn parse(extra: &[&str]) -> ServeArgs {
     argv.extend_from_slice(extra);
     match super::super::Cli::parse_from(argv).command {
         super::super::Command::Serve(a) => a,
-        super::super::Command::Benchmark(_) | super::super::Command::DisplayCarveout(_) => {
+        super::super::Command::Benchmark(_)
+        | super::super::Command::DisplayCarveout(_)
+        | super::super::Command::Policy(_) => {
             unreachable!("this test parses a serve command")
         }
     }

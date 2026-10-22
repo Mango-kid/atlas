@@ -1,0 +1,53 @@
+[package]
+name = "spark-pi05"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Native Atlas pi0.5 vision-language-action policy"
+
+[features]
+default = ["cuda"]
+cuda = ["dep:atlas-core", "atlas-core/cuda", "dep:spark-runtime", "spark-runtime/cuda"]
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+atlas-core = { workspace = true, optional = true }
+spark-runtime = { path = "../spark-runtime", default-features = false, optional = true }
+half = "2"
+bytemuck = "1"
+sentencepiece-rs = "0.2.2"
+tracing = "0.1"
+sha2.workspace = true
+
+[lints]
+workspace = true
+
+[[example]]
+name = "policy_bench"
+required-features = ["cuda"]
+
+[[example]]
+name = "policy_trace"
+required-features = ["cuda"]
+
+[[example]]
+name = "affine_check"
+required-features = ["cuda"]
+
+[[example]]
+name = "nvfp4_check"
+required-features = ["cuda"]
+
+[[example]]
+name = "nvfp4_capture"
+required-features = ["cuda"]
+
+[[example]]
+name = "policy_profile"
+required-features = ["cuda"]
+
+[[example]]
+name = "fp8_check"
+required-features = ["cuda"]

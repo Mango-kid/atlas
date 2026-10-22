@@ -2226,6 +2226,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
+name = "sentencepiece-rs"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bc4483945bfd66b8727ed59005af1543d3d966ca92f9bc065bfef532de1d7e8"
+
+[[package]]
 name = "serde"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2436,6 +2442,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "spark-pi05"
+version = "1.0.0-beta-preview"
+dependencies = [
+ "anyhow",
+ "atlas-core",
+ "bytemuck",
+ "half",
+ "sentencepiece-rs",
+ "serde",
+ "serde_json",
+ "sha2",
+ "spark-runtime",
+ "tracing",
+]
+
+[[package]]
 name = "spark-runtime"
 version = "1.0.0-beta-preview"
 dependencies = [
@@ -2489,6 +2511,7 @@ dependencies = [
  "serde_json",
  "spark-comm",
  "spark-model",
+ "spark-pi05",
  "spark-runtime",
  "spark-storage",
  "tempfile",
