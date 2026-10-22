@@ -93,7 +93,7 @@ The earlier NVFP4-only profile already exhibited synthetic gripper-mode
 sensitivity. That limitation is evaluated separately from primitive arithmetic
 and latency; performance improvements do not establish robot-task success.
 
-## Final two-Spark result, 2026-10-22
+## Initial two-Spark result, 2026-10-22
 
 Both independent replicas run identical binaries and the expert-only FP8
 overlay. Each run uses 21 warmups and 1,400 synchronized calls distributed
@@ -157,12 +157,59 @@ held-out requests, paired references, and HTTP outputs under
 `native-fp8-heldout16/`. `native-fast-summary.json` records final HTTP latency,
 binary/manifest hashes, accuracy, and validation. The source manifest,
 recovery archive, and tracked patch are `native-fast-source-*` and
-`native-fast-tracked-changes.patch` in the experiment root. This is an
-uncommitted `feat/pi05-native` worktree based on `34399129`; the archive, not
-that base commit alone, identifies the implementation.
+`native-fast-tracked-changes.patch` in the experiment root. This is the
+`feat/pi05-native` implementation committed as `28b24c60`; the archive also
+preserves the source used for these measurements.
 
 Both port-8000 services use `launch-native-fast.sh` and report
 `atlas-native-fp8-nvfp4`. They are transient user services. The prior NVFP4
 and BF16 binaries, snapshots, launch scripts, and GLM restoration script
 remain available; GLM services are stopped and their boot enablement is
 unchanged.
+
+## Exact-output optimization follow-up
+
+The follow-up keeps the same checkpoint, quantization manifests, two cameras,
+ten denoising steps, and ten decoded actions. It changes native GPU execution;
+HTTP transport is outside the measurement.
+
+GELU and activation packing now share a kernel for NVFP4 prefix and FP8 expert
+projections. Expert adaptive normalization also packs FP8 activations directly.
+Both fusions retain the original intermediate BF16 rounding and quantization
+scales. Vision attention uses a larger output tile and a warp softmax with the
+same sum reduction order. Owned, padded K/V caches eliminate repeated copies;
+cached rotary tables combine query/key rotation and clear both cache tails on
+every graph replay. Generic attention and incompatible projection groups retain
+their existing paths.
+
+Fresh paired runs use 21 warmups and 1,400 calls per Spark, equally distributed
+across seven fixed inputs. Timing includes preprocessing, synchronized GPU
+execution, and action decoding; loading and graph capture are excluded.
+
+| DGX Spark | Fresh baseline mean | Optimized mean | Optimized p95 | Latency reduction |
+|---|---:|---:|---:|---:|
+| gx10-4386 | 55.64 ms | 49.41 ms | 50.19 ms | 11.20% |
+| gx10-ec6d | 55.56 ms | 49.63 ms | 50.37 ms | 10.67% |
+
+Both also exceed a 10% reduction against the previously recorded 55.53/55.68 ms
+baselines. Identical binaries run on both Sparks.
+
+Decoded actions are bit-identical to the committed baseline on 55 fixed cases:
+the original seven inputs, 16 held-out observations, and 32 additional noise
+and prompt variants. The BF16 path separately preserves all seven original
+outputs exactly. `tests/pi05/compare_exact.py` enforces finite 10-by-7 actions,
+matching ordered requests and backend, and identical decoded floating-point
+bits, including signed zero. These checks establish no additional numerical
+drift on the tested inputs; the earlier quantized-profile limitations remain.
+
+GPU checks cover exact NVFP4 GELU packing, FP8 normalization/GELU packing,
+vision attention, cached attention, rotary tables, and fused rotation/tail
+clearing. They include changed-input graph replay and poisoned padding.
+Workspace validation passes 7,649 tests with 222 ignored, plus formatting,
+workspace/example clippy, rustdoc, mdBook, license headers, typos, and kernel
+shadow checks. Changed Rust files remain within the 500-line cap.
+
+Paired native results are saved as `native-exact-baseline-*.json` and
+`native-exact-final-*.json` in the experiment's `cache/results/` directory.
+The 55-case comparisons are in `native-exact-quality/`, with BF16 parity in
+`native-exact-bf16-parity.json` and kernel checks in `native-exact-*-ops.json`.

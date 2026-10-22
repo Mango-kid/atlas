@@ -3,7 +3,7 @@
 use anyhow::Result;
 use spark_runtime::gpu::DevicePtr;
 
-use super::buffers::Scratch;
+use super::buffers::{Cache, Scratch};
 use crate::{ops::Ops, weights::Weights};
 #[path = "model_linear.rs"]
 mod linear;
@@ -92,7 +92,6 @@ pub(super) struct TransformerLayer {
     up: Linear,
     down: Linear,
     pub width: usize,
-    pub mlp: usize,
 }
 
 impl TransformerLayer {
@@ -136,7 +135,6 @@ impl TransformerLayer {
             up: Linear::load(w, &format!("{p}.mlp.up_proj"), width, mlp, false)?,
             down: Linear::load(w, &format!("{p}.mlp.down_proj"), mlp, width, false)?,
             width,
-            mlp,
         })
     }
 
@@ -148,10 +146,10 @@ impl TransformerLayer {
         s: &Scratch,
         rows: usize,
         positions: DevicePtr,
-        key: DevicePtr,
-        value: DevicePtr,
+        cache: &Cache,
         eps: f32,
     ) -> Result<()> {
+        let (key, value) = (cache.key, cache.value);
         ops.rms_norm(s.hidden, self.norm1, s.norm, rows, self.width, eps)?;
         Linear::bf16_group(ops, s.norm, rows, &[(&self.k, key), (&self.v, value)])?;
         ops.rope(key, positions, rows, 1, 256)
@@ -165,44 +163,36 @@ impl TransformerLayer {
         s: &Scratch,
         rows: usize,
         positions: DevicePtr,
-        key: DevicePtr,
-        value: DevicePtr,
+        cache: &Cache,
         prefix_rows: usize,
         modulation: Option<(DevicePtr, DevicePtr)>,
         eps: f32,
     ) -> Result<()> {
-        self.normalize(
+        let (key, value) = (cache.key, cache.value);
+        Linear::normalized_group(
             ops,
             s.hidden,
             s.norm,
+            rows,
+            self.width,
             self.norm1,
             modulation.map(|m| m.0),
-            rows,
             eps,
-        )?;
-        Linear::bf16_group(
-            ops,
-            s.norm,
-            rows,
             &[
                 (&self.q, s.q),
                 (&self.k, key.offset(prefix_rows * 256 * 2)),
                 (&self.v, value.offset(prefix_rows * 256 * 2)),
             ],
         )?;
-        ops.rope(s.q, positions, rows, 8, 256)?;
-        ops.rope(key.offset(prefix_rows * 256 * 2), positions, rows, 1, 256)?;
-        ops.attention(
+        ops.rope_attention_mqa_cached(
             s.q,
             key,
             value,
+            positions,
             s.attention,
             rows,
-            prefix_rows + rows,
-            8,
-            1,
-            256,
-            DevicePtr::NULL,
+            prefix_rows,
+            cache.capacity_rows(),
             s.scores,
         )?;
         self.o.bf16(ops, s.attention, s.delta, rows)?;
@@ -213,18 +203,18 @@ impl TransformerLayer {
             rows,
             self.width,
         )?;
-        self.normalize(
+        Linear::normalized_group(
             ops,
             s.hidden,
             s.norm,
+            rows,
+            self.width,
             self.norm2,
             modulation.map(|m| m.1),
-            rows,
             eps,
+            &[(&self.gate, s.gate), (&self.up, s.up)],
         )?;
-        Linear::bf16_group(ops, s.norm, rows, &[(&self.gate, s.gate), (&self.up, s.up)])?;
-        ops.gelu_mul(s.gate, s.up, s.gate, rows * self.mlp)?;
-        self.down.bf16(ops, s.gate, s.delta, rows)?;
+        self.down.gelu_mul_bf16(ops, s.gate, s.up, s.delta, rows)?;
         ops.residual(
             s.hidden,
             s.delta,
@@ -232,22 +222,5 @@ impl TransformerLayer {
             rows,
             self.width,
         )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn normalize(
-        &self,
-        ops: &Ops<'_>,
-        x: DevicePtr,
-        out: DevicePtr,
-        weight: DevicePtr,
-        modulation: Option<DevicePtr>,
-        rows: usize,
-        eps: f32,
-    ) -> Result<()> {
-        match modulation {
-            Some(m) => ops.adarms(x, m, out, rows, self.width, eps),
-            None => ops.rms_norm(x, weight, out, rows, self.width, eps),
-        }
     }
 }

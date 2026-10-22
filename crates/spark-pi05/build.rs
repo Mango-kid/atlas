@@ -9,8 +9,13 @@ fn main() {
     let source = "../../kernels/gb10/pi05/bf16/pi05.cu";
     println!("cargo:rerun-if-changed={source}");
     println!("cargo:rerun-if-changed=../../kernels/gb10/pi05/bf16/nvfp4.cuh");
+    println!("cargo:rerun-if-changed=../../kernels/gb10/pi05/bf16/nvfp4_gelu.cuh");
     println!("cargo:rerun-if-changed=../../kernels/gb10/pi05/bf16/fp8.cuh");
+    println!("cargo:rerun-if-changed=../../kernels/gb10/pi05/bf16/fp8_fused.cuh");
     println!("cargo:rerun-if-changed=../../kernels/gb10/pi05/bf16/attention_mqa.cuh");
+    println!("cargo:rerun-if-changed=../../kernels/gb10/pi05/bf16/attention_vision.cuh");
+    println!("cargo:rerun-if-changed=../../kernels/gb10/pi05/bf16/pi05_cached_kv.cuh");
+    println!("cargo:rerun-if-changed=../../kernels/gb10/pi05/bf16/rope.cuh");
     for name in ["ATLAS_SKIP_BUILD", "ATLAS_PI05_BUILD", "CUDA_HOME"] {
         println!("cargo:rerun-if-env-changed={name}");
     }

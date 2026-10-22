@@ -22,7 +22,7 @@ use crate::{
     ops::{Nvfp4Scratch, Ops},
     weights::Weights,
 };
-use buffers::{Buffers, Scratch, upload_f32};
+use buffers::{Buffers, Cache, Scratch, upload_f32};
 #[path = "model_time.rs"]
 mod time;
 #[path = "model_vision.rs"]
@@ -51,10 +51,11 @@ pub struct NativeModel {
     patches: DevicePtr,
     tokens: DevicePtr,
     positions: DevicePtr,
+    rope_table: DevicePtr,
     image_scratch: Scratch,
     prefix_scratch: Scratch,
     expert_scratch: Scratch,
-    cache: Vec<(DevicePtr, DevicePtr)>,
+    cache: Vec<Cache>,
     modulation: Vec<(DevicePtr, DevicePtr)>,
     final_modulation: DevicePtr,
     noise: DevicePtr,
@@ -116,6 +117,8 @@ impl NativeModel {
         let patches = buffers.alloc(2 * 256 * 588 * 4)?;
         let tokens = buffers.alloc(200 * 4)?;
         let positions = buffers.alloc(722 * 4)?;
+        let rope_table = buffers.alloc(722 * 256 * 2)?;
+        ops.prepare_rope_table(rope_table, 722, 256)?;
         let image_scratch = Scratch::new(&mut buffers, 512, 1152, 4304)?;
         let prefix_scratch = Scratch::new(&mut buffers, 712, 2048, 16384)?;
         let expert_scratch = Scratch::new(&mut buffers, 10, 1024, 4096)?;
@@ -140,7 +143,10 @@ impl NativeModel {
         };
         let mut cache = Vec::with_capacity(18);
         for _ in 0..18 {
-            cache.push((buffers.alloc(722 * 256 * 2)?, buffers.alloc(722 * 256 * 2)?));
+            cache.push(Cache::new(
+                &mut buffers,
+                512 + config.max_token_len + config.action_horizon,
+            )?);
         }
         let (modulation, final_modulation) =
             prepare_time(&ops, &weights, &expert, &mut buffers, config.num_steps)?;
@@ -168,6 +174,7 @@ impl NativeModel {
             patches,
             tokens,
             positions,
+            rope_table,
             image_scratch,
             prefix_scratch,
             expert_scratch,
@@ -274,6 +281,7 @@ impl NativeModel {
     fn compute(&self, token_count: usize, mut sink: Option<&mut dyn TraceSink>) -> Result<()> {
         let rows = 512 + token_count;
         let mut ops = Ops::new(self.gpu.as_ref(), self.gpu.default_stream())?;
+        ops.rope_table = Some(self.rope_table);
         ops.nvfp4_scratch = self.nvfp4_scratch.as_ref();
         ops.fp8_scratch = self.fp8_scratch.as_ref();
         self.embed_images(&ops, &mut sink)?;
@@ -293,15 +301,15 @@ impl NativeModel {
             self.prefix_scratch.hidden,
             true,
         )?;
-        for (index, (layer, &(key, value))) in self.prefix.iter().zip(&self.cache).enumerate() {
+        for (index, (layer, cache)) in self.prefix.iter().zip(&self.cache).enumerate() {
+            let (key, value) = (cache.key, cache.value);
             if index + 1 == self.prefix.len() {
                 layer.cache_only(
                     &ops,
                     &self.prefix_scratch,
                     rows,
                     self.positions,
-                    key,
-                    value,
+                    cache,
                     self.config.rms_norm_eps,
                 )?;
                 capture(
@@ -327,8 +335,7 @@ impl NativeModel {
                 &self.prefix_scratch,
                 rows,
                 self.positions,
-                key,
-                value,
+                cache,
                 0,
                 None,
                 self.config.rms_norm_eps,
@@ -378,7 +385,7 @@ impl NativeModel {
                 self.expert_scratch.hidden,
                 true,
             )?;
-            for ((layer, &(key, value)), &(m1, m2)) in
+            for ((layer, cache), &(m1, m2)) in
                 self.expert.iter().zip(&self.cache).zip(&self.modulation)
             {
                 let offset = step * 3072 * 4;
@@ -387,8 +394,7 @@ impl NativeModel {
                     &self.expert_scratch,
                     10,
                     self.positions.offset(rows * 4),
-                    key,
-                    value,
+                    cache,
                     rows,
                     Some((m1.offset(offset), m2.offset(offset))),
                     self.config.rms_norm_eps,

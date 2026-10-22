@@ -44,6 +44,72 @@ impl Ops<'_> {
             .launch(self.stream)
     }
 
+    /// Preserve AdaRMS's reduction and BF16 rounding before exact FP8 packing.
+    #[allow(clippy::too_many_arguments)]
+    pub fn adarms_quantize_fp8(
+        &self,
+        x: DevicePtr,
+        modulation: DevicePtr,
+        m: usize,
+        k: usize,
+        eps: f32,
+        scale: f32,
+        scratch: &Fp8Scratch,
+    ) -> Result<()> {
+        ensure!(
+            m > 0 && m <= scratch.max_rows && k > 0 && k <= scratch.max_k && k.is_multiple_of(16),
+            "FP8 scratch geometry"
+        );
+        ensure!(scale.is_finite() && scale > 0.0, "FP8 activation scale");
+        ensure!(eps.is_finite() && eps > 0.0, "AdaRMS epsilon");
+        KernelLaunch::new(
+            self.gpu,
+            self.gpu.kernel("pi05", "pi05_adarms_quantize_fp8")?,
+        )
+        .grid([u32::try_from(m)?, 1, 1])
+        .block([256, 1, 1])
+        .arg_ptr(x)
+        .arg_ptr(modulation)
+        .arg_ptr(scratch.packed)
+        .arg_u32(u32::try_from(k)?)
+        .arg_f32(eps)
+        .arg_f32(scale)
+        .launch(self.stream)
+    }
+
+    /// Both BF16 rounding boundaries precede FP8 conversion.
+    pub fn gelu_mul_quantize_fp8(
+        &self,
+        gate: DevicePtr,
+        up: DevicePtr,
+        m: usize,
+        k: usize,
+        scale: f32,
+        scratch: &Fp8Scratch,
+    ) -> Result<()> {
+        ensure!(
+            m > 0 && m <= scratch.max_rows && k > 0 && k <= scratch.max_k && k.is_multiple_of(16),
+            "FP8 scratch geometry"
+        );
+        ensure!(scale.is_finite() && scale > 0.0, "FP8 activation scale");
+        let count = u32::try_from(
+            m.checked_mul(k)
+                .ok_or_else(|| anyhow::anyhow!("FP8 element count overflow"))?,
+        )?;
+        KernelLaunch::new(
+            self.gpu,
+            self.gpu.kernel("pi05", "pi05_gelu_mul_quantize_fp8")?,
+        )
+        .grid([count.div_ceil(256), 1, 1])
+        .block([256, 1, 1])
+        .arg_ptr(gate)
+        .arg_ptr(up)
+        .arg_ptr(scratch.packed)
+        .arg_u32(count)
+        .arg_f32(scale)
+        .launch(self.stream)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn linear_fp8(
         &self,

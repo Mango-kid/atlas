@@ -11,9 +11,13 @@ pub mod ops;
 #[cfg(feature = "cuda")]
 pub mod ops_attention;
 #[cfg(feature = "cuda")]
+pub mod ops_attention_vision;
+#[cfg(feature = "cuda")]
 pub mod ops_fp8;
 #[cfg(feature = "cuda")]
 pub mod ops_nvfp4;
+#[cfg(feature = "cuda")]
+pub mod ops_rope;
 #[cfg(feature = "cuda")]
 mod policy;
 pub mod preprocess;

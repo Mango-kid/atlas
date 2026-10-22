@@ -55,6 +55,42 @@ impl Ops<'_> {
             .launch(self.stream)
     }
 
+    /// Exact fusion of BF16 gated GELU and the existing NVFP4 codec.
+    #[allow(clippy::too_many_arguments)]
+    pub fn gelu_mul_quantize_nvfp4(
+        &self,
+        gate: DevicePtr,
+        up: DevicePtr,
+        m: usize,
+        k: usize,
+        global_scale: f32,
+        scratch: &Nvfp4Scratch,
+    ) -> Result<()> {
+        ensure!(
+            m > 0 && m <= scratch.max_rows && k > 0 && k <= scratch.max_k && k.is_multiple_of(64),
+            "NVFP4 scratch geometry"
+        );
+        ensure!(
+            (6.0 * global_scale).is_finite() && global_scale > 0.0,
+            "NVFP4 activation global scale"
+        );
+        let groups = m.div_ceil(128) * 128 * (k / 16);
+        KernelLaunch::new(
+            self.gpu,
+            self.gpu.kernel("pi05", "pi05_gelu_mul_quantize_nvfp4")?,
+        )
+        .grid([u32::try_from(groups.div_ceil(32))?, 1, 1])
+        .block([256, 1, 1])
+        .arg_ptr(gate)
+        .arg_ptr(up)
+        .arg_ptr(scratch.packed)
+        .arg_ptr(scratch.scales)
+        .arg_u32(u32::try_from(m)?)
+        .arg_u32(u32::try_from(k)?)
+        .arg_f32(global_scale)
+        .launch(self.stream)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn linear_nvfp4(
         &self,

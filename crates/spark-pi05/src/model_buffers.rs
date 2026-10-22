@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use anyhow::Result;
+use anyhow::{Result, ensure};
 use spark_runtime::gpu::{DevicePtr, GpuBackend};
 use std::sync::Arc;
 
@@ -42,6 +42,32 @@ impl Drop for Buffers {
 
 pub(super) fn upload_f32(gpu: &dyn GpuBackend, ptr: DevicePtr, values: &[f32]) -> Result<()> {
     gpu.copy_h2d(bytemuck::cast_slice(values), ptr)
+}
+
+/// Model-owned single-head K/V with writable tensor-core padding rows.
+pub(super) struct Cache {
+    pub key: DevicePtr,
+    pub value: DevicePtr,
+    capacity_rows: usize,
+}
+
+impl Cache {
+    pub fn new(buffers: &mut Buffers, max_rows: usize) -> Result<Self> {
+        ensure!(
+            max_rows > 0 && max_rows <= 1024,
+            "unsupported model KV capacity"
+        );
+        let capacity_rows = max_rows.div_ceil(16) * 16;
+        Ok(Self {
+            key: buffers.alloc(capacity_rows * 256 * 2)?,
+            value: buffers.alloc(capacity_rows * 256 * 2)?,
+            capacity_rows,
+        })
+    }
+
+    pub fn capacity_rows(&self) -> usize {
+        self.capacity_rows
+    }
 }
 
 pub(super) struct Scratch {

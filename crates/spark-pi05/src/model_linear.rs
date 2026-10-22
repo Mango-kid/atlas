@@ -63,21 +63,7 @@ impl Linear {
                 let scale = f32::from_bits(scale_bits);
                 ops.quantize_fp8(x, rows, input, scale, scratch)?;
                 for &(linear, out) in projections {
-                    let quant = linear.fp8.context("shared FP8 projection metadata")?;
-                    let alpha = scale * quant.weight_scale;
-                    ensure!(alpha.is_finite() && alpha > 0.0, "FP8 scale product");
-                    spark_runtime::cublaslt::fp8_gemm_act_weight_t_scaled(
-                        scratch.packed.0,
-                        linear.weight.0,
-                        linear.bias.map(|p| p.0),
-                        out.0,
-                        u32::try_from(rows)?,
-                        u32::try_from(linear.output)?,
-                        u32::try_from(input)?,
-                        alpha,
-                        false,
-                        ops.stream,
-                    )?;
+                    linear.fp8_prequantized(ops, out, rows)?;
                 }
             }
             Some(SharedInput::Nvfp4 { input, scale_bits }) => {
@@ -110,6 +96,71 @@ impl Linear {
             }
         }
         Ok(())
+    }
+
+    /// Consume already packed compatible activations without another quantizer.
+    fn fp8_prequantized(&self, ops: &Ops<'_>, out: DevicePtr, rows: usize) -> Result<()> {
+        let quant = self.fp8.context("shared FP8 projection metadata")?;
+        let scratch = ops
+            .fp8_scratch
+            .context("FP8 model requires resident quantization workspace")?;
+        let alpha = quant.activation_scale * quant.weight_scale;
+        ensure!(alpha.is_finite() && alpha > 0.0, "FP8 scale product");
+        spark_runtime::cublaslt::fp8_gemm_act_weight_t_scaled(
+            scratch.packed.0,
+            self.weight.0,
+            self.bias.map(|p| p.0),
+            out.0,
+            u32::try_from(rows)?,
+            u32::try_from(self.output)?,
+            u32::try_from(self.input)?,
+            alpha,
+            false,
+            ops.stream,
+        )
+    }
+
+    /// Only compatible FP8 expert groups fuse normalization and packing.
+    /// BF16, NVFP4 and incompatible scales retain the original two-stage path.
+    #[allow(clippy::too_many_arguments)]
+    pub fn normalized_group(
+        ops: &Ops<'_>,
+        x: DevicePtr,
+        norm: DevicePtr,
+        rows: usize,
+        width: usize,
+        weight: DevicePtr,
+        modulation: Option<DevicePtr>,
+        eps: f32,
+        projections: &[(&Self, DevicePtr)],
+    ) -> Result<()> {
+        if let (Some(modulation), Some(SharedInput::Fp8 { input, scale_bits })) =
+            (modulation, Self::shared_input(projections))
+        {
+            ensure!(input == width, "normalization projection width");
+            let scratch = ops
+                .fp8_scratch
+                .context("FP8 model requires resident quantization workspace")?;
+            ops.adarms_quantize_fp8(
+                x,
+                modulation,
+                rows,
+                width,
+                eps,
+                f32::from_bits(scale_bits),
+                scratch,
+            )?;
+            for &(linear, out) in projections {
+                linear.fp8_prequantized(ops, out, rows)?;
+            }
+            Ok(())
+        } else {
+            match modulation {
+                Some(modulation) => ops.adarms(x, modulation, norm, rows, width, eps)?,
+                None => ops.rms_norm(x, weight, norm, rows, width, eps)?,
+            }
+            Self::bf16_group(ops, norm, rows, projections)
+        }
     }
 
     pub fn load(w: &Weights, name: &str, input: usize, output: usize, bias: bool) -> Result<Self> {
@@ -168,6 +219,54 @@ impl Linear {
             self.output,
             self.input,
         )
+    }
+
+    /// Preserve both BF16 GELU/product roundings while eliminating the
+    /// materialized activation when the consumer uses FP8 or NVFP4.
+    pub fn gelu_mul_bf16(
+        &self,
+        ops: &Ops<'_>,
+        gate: DevicePtr,
+        up: DevicePtr,
+        out: DevicePtr,
+        rows: usize,
+    ) -> Result<()> {
+        if self.fp8.is_some() {
+            let scratch = ops
+                .fp8_scratch
+                .context("FP8 model requires resident quantization workspace")?;
+            let quant = self.fp8.context("FP8 projection metadata")?;
+            ops.gelu_mul_quantize_fp8(gate, up, rows, self.input, quant.activation_scale, scratch)?;
+            self.fp8_prequantized(ops, out, rows)
+        } else if let Some(quant) = self.nvfp4 {
+            let scratch = ops
+                .nvfp4_scratch
+                .context("NVFP4 model requires resident quantization workspace")?;
+            ops.gelu_mul_quantize_nvfp4(
+                gate,
+                up,
+                rows,
+                self.input,
+                quant.activation_global_scale,
+                scratch,
+            )?;
+            spark_runtime::cublaslt::nvfp4_gemm_act_weight_t(
+                scratch.packed.0,
+                scratch.scales.0,
+                self.weight.0,
+                quant.scales.0,
+                quant.activation_global_scale * quant.weight_global_scale,
+                self.bias.map(|p| p.0),
+                out.0,
+                u32::try_from(rows)?,
+                u32::try_from(self.output)?,
+                u32::try_from(self.input)?,
+                ops.stream,
+            )
+        } else {
+            ops.gelu_mul(gate, up, gate, rows * self.input)?;
+            self.bf16(ops, gate, out, rows)
+        }
     }
 
     pub fn f32(&self, ops: &Ops<'_>, x: DevicePtr, out: DevicePtr, rows: usize) -> Result<()> {

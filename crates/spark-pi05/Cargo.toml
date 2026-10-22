@@ -51,3 +51,27 @@ required-features = ["cuda"]
 [[example]]
 name = "fp8_check"
 required-features = ["cuda"]
+
+[[example]]
+name = "nvfp4_gelu_check"
+required-features = ["cuda"]
+
+[[example]]
+name = "vision_attention_check"
+required-features = ["cuda"]
+
+[[example]]
+name = "cached_attention_check"
+required-features = ["cuda"]
+
+[[example]]
+name = "rope_check"
+required-features = ["cuda"]
+
+[[example]]
+name = "fp8_fused_check"
+required-features = ["cuda"]
+
+[[example]]
+name = "rope_attention_check"
+required-features = ["cuda"]

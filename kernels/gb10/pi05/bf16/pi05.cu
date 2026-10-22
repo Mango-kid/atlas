@@ -265,6 +265,11 @@ extern "C" __global__ void pi05_attention_pv(
 
 
 #include "nvfp4.cuh"
+#include "nvfp4_gelu.cuh"
 
 #include "fp8.cuh"
+#include "fp8_fused.cuh"
 #include "attention_mqa.cuh"
+#include "attention_vision.cuh"
+#include "pi05_cached_kv.cuh"
+#include "rope.cuh"

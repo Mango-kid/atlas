@@ -8,6 +8,7 @@ use spark_runtime::kernel_args::KernelLaunch;
 
 /// All GPU I/O and launches use Atlas's backend boundary.
 pub struct Ops<'a> {
+    pub rope_table: Option<DevicePtr>,
     pub gpu: &'a dyn GpuBackend,
     pub stream: u64,
     pub nvfp4_scratch: Option<&'a Nvfp4Scratch>,
@@ -23,6 +24,7 @@ impl<'a> Ops<'a> {
             stream,
             nvfp4_scratch: None,
             fp8_scratch: None,
+            rope_table: None,
         })
     }
 
